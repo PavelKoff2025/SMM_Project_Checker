@@ -1,0 +1,65 @@
+services:
+  web:
+    build: .
+    container_name: smm_checker
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    environment:
+      - FLASK_ENV=production
+      - DATABASE_URL=postgresql://smm_user:smm_pass@db:5432/smm_checker
+    volumes:
+      - uploads_data:/app/uploads:rw
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - frontend
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; exit(0 if urllib.request.urlopen('http://localhost:5000/api/health').status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  db:
+    image: postgres:16-alpine
+    container_name: smm_checker_db
+    environment:
+      - POSTGRES_USER=smm_user
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-smm_pass}
+      - POSTGRES_DB=smm_checker
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smm_user -d smm_checker"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    internal: true
+
+volumes:
+  postgres_data:
+  uploads_data:

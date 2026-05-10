@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row justify-content-center mt-5">
+  <div class="col-lg-5 text-center">
+    <div class="card shadow border-0">
+      <div class="card-body p-5">
+        <div class="mb-4" id="statusIcon">
+          <div class="spinner-border text-primary" role="status" style="width: 4rem; height: 4rem;">
+            <span class="visually-hidden">Обработка...</span>
+          </div>
+        </div>
+
+        <h4 id="statusTitle">Анализ выполняется</h4>
+        <p class="text-muted small mb-4" id="statusDesc">
+          Пожалуйста, подождите, пока мы анализируем вашу презентацию...
+        </p>
+
+        <div class="progress mb-3" style="height: 8px;">
+          <div id="mainProgress" class="progress-bar progress-bar-striped progress-bar-animated" style="width: 0%"></div>
+        </div>
+
+        <div class="d-flex justify-content-between small text-muted px-1">
+          <span>Загружено</span>
+          <span id="statusStep">Парсинг файла...</span>
+          <span>Готово</span>
+        </div>
+
+        <div id="logContainer" class="mt-4 text-start small text-muted" style="max-height: 200px; overflow-y: auto;">
+        </div>
+
+        <div id="errorContainer" class="mt-3 d-none">
+          <div class="alert alert-danger" role="alert">
+            <i class="bi bi-exclamation-triangle me-1"></i>
+            <span id="errorMessage">Произошла ошибка при анализе.</span>
+          </div>
+          <a href="{{ url_for('checker.upload_page') }}" class="btn btn-outline-dark">
+            <i class="bi bi-arrow-left me-1"></i>Попробовать снова
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  const CHECK_ID = {{ check_id }};
+  const STATUS_URL = '/api/check/' + CHECK_ID + '/status';
+  const REPORT_URL = '/check/' + CHECK_ID + '/report';
+  const LOG_POLL_INTERVAL = 2000;
+  const STATUS_POLL_INTERVAL = 1500;
+
+  const steps = [
+    { pct: 10, label: 'Загрузка файла...' },
+    { pct: 25, label: 'Парсинг презентации...' },
+    { pct: 50, label: 'Извлечение текста...' },
+    { pct: 70, label: 'Отправка в DeepSeek AI...' },
+    { pct: 90, label: 'Генерация отчёта...' },
+    { pct: 100, label: 'Готово!' },
+  ];
+
+  let stepIdx = 0;
+  const progressBar = document.getElementById('mainProgress');
+  const statusStep = document.getElementById('statusStep');
+  const statusTitle = document.getElementById('statusTitle');
+  const statusDesc = document.getElementById('statusDesc');
+  const statusIcon = document.getElementById('statusIcon');
+  const logContainer = document.getElementById('logContainer');
+  const errorContainer = document.getElementById('errorContainer');
+  const errorMessage = document.getElementById('errorMessage');
+
+  function advanceStep() {
+    if (stepIdx < steps.length) {
+      const s = steps[stepIdx];
+      progressBar.style.width = s.pct + '%';
+      statusStep.textContent = s.label;
+      stepIdx++;
+    }
+  }
+
+  const stepTimer = setInterval(advanceStep, 2500);
+
+  function addLog(level, msg) {
+    const div = document.createElement('div');
+    div.className = 'mb-1';
+    const icon = document.createElement('i');
+    icon.className = level === 'error'
+      ? 'bi bi-x-circle-fill text-danger me-1'
+      : 'bi bi-check2-circle text-success me-1';
+    div.appendChild(icon);
+    div.appendChild(document.createTextNode(' ' + msg));
+    logContainer.appendChild(div);
+    logContainer.scrollTop = logContainer.scrollHeight;
+  }
+
+  function showError(msg) {
+    clearInterval(stepTimer);
+    clearInterval(statusTimer);
+    statusIcon.innerHTML = '<i class="bi bi-exclamation-triangle text-danger" style="font-size: 4rem;"></i>';
+    statusTitle.textContent = 'Анализ не удался';
+    statusDesc.textContent = '';
+    errorMessage.textContent = msg;
+    errorContainer.classList.remove('d-none');
+  }
+
+  function showComplete() {
+    clearInterval(stepTimer);
+    clearInterval(statusTimer);
+    progressBar.style.width = '100%';
+    progressBar.classList.remove('progress-bar-animated');
+    statusIcon.innerHTML = '<i class="bi bi-check-circle-fill text-success" style="font-size: 4rem;"></i>';
+    statusTitle.textContent = 'Анализ завершён!';
+    statusStep.textContent = 'Перенаправление...';
+    setTimeout(() => { window.location.href = REPORT_URL; }, 1000);
+  }
+
+  async function pollStatus() {
+    try {
+      const resp = await fetch(STATUS_URL);
+      if (!resp.ok) return;
+      const data = await resp.json();
+
+      if (data.status === 'completed') {
+        showComplete();
+      } else if (data.status === 'error') {
+        const reportResp = await fetch('/api/check/' + CHECK_ID + '/report');
+        if (reportResp.ok) {
+          const reportData = await reportResp.json();
+          showError(reportData.report?.error || 'Неизвестная ошибка');
+        } else {
+          showError('Произошла ошибка при анализе.');
+        }
+      }
+    } catch (_) {}
+  }
+
+  async function pollLogs() {
+    try {
+      const resp = await fetch('/api/check/' + CHECK_ID + '/status');
+      if (!resp.ok) return;
+    } catch (_) {}
+  }
+
+  const statusTimer = setInterval(pollStatus, STATUS_POLL_INTERVAL);
+  pollStatus();
+</script>
+{% endblock %}

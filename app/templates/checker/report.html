@@ -1,0 +1,345 @@
+{% extends "base.html" %}
+{% block extra_head %}
+<style>
+  .criteria-bar {
+    height: 10px;
+    border-radius: 5px;
+  }
+  .grade-circle {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2.5rem;
+    font-weight: 700;
+    margin: 0 auto;
+  }
+  .export-btn-group .btn {
+    min-width: 90px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div id="loadingState" class="text-center py-5">
+  <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;"></div>
+  <p class="text-muted">Загрузка отчёта...</p>
+</div>
+
+<div id="reportContent" class="d-none">
+  <div class="card border-0 shadow-sm mb-4">
+    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+      <div>
+        <h4 class="mb-0"><i class="bi bi-file-earmark-check me-1"></i> Отчёт по проекту</h4>
+        {% if check %}
+        <small>Файл: <strong>{{ check.original_filename }}</strong> | ID: {{ check.id }}</small>
+        {% endif %}
+      </div>
+      <div class="export-btn-group">
+        <button class="btn btn-sm btn-light" onclick="exportReport('txt')">
+          <i class="bi bi-filetype-txt"></i> TXT
+        </button>
+        <button class="btn btn-sm btn-light" onclick="exportReport('md')">
+          <i class="bi bi-markdown"></i> MD
+        </button>
+        <button class="btn btn-sm btn-light" onclick="exportReport('pdf')">
+          <i class="bi bi-filetype-pdf"></i> PDF
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-lg-4">
+      <div class="card shadow-sm border-0 text-center h-100">
+        <div class="card-body">
+          <p class="text-muted small mb-2">Общая оценка</p>
+          <div class="grade-circle" id="gradeCircle">—</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-8">
+      <div class="card shadow-sm border-0 h-100">
+        <div class="card-body">
+          <h6 class="card-title mb-3"><i class="bi bi-bar-chart me-1"></i>Оценки по критериям</h6>
+          <div id="criteriaList"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card shadow-sm border-0 mb-4">
+    <div class="card-body">
+      <h6 class="card-title"><i class="bi bi-chat-square-text me-1"></i>Фидбек</h6>
+      <p id="feedbackText" class="mb-0"></p>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-md-6">
+      <div class="card shadow-sm border-0 h-100">
+        <div class="card-body">
+          <h6 class="card-title text-success">
+            <i class="bi bi-check-circle-fill me-1"></i>Сильные стороны
+          </h6>
+          <ul id="strengthsList" class="list-unstyled mb-0"></ul>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card shadow-sm border-0 h-100">
+        <div class="card-body">
+          <h6 class="card-title text-danger">
+            <i class="bi bi-x-circle-fill me-1"></i>Слабые стороны
+          </h6>
+          <ul id="weaknessesList" class="list-unstyled mb-0"></ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="templateComplianceContainer"></div>
+
+  <div class="card shadow-sm border-0 mt-4" id="teacherLetterCard">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-start mb-2">
+        <h6 class="card-title mb-0">
+          <i class="bi bi-envelope me-1"></i>Письмо преподавателя студентам
+        </h6>
+        <button class="btn btn-sm btn-outline-success" onclick="copyLetter()">
+          <i class="bi bi-clipboard me-1"></i>Скопировать
+        </button>
+      </div>
+      <div id="letterResult" class="mt-2">
+        <span class="badge fs-6" id="letterBadge"></span>
+      </div>
+      <pre id="teacherLetterText" class="mt-3 p-3 bg-light rounded small" style="white-space: pre-wrap; font-family: inherit; cursor: pointer;" onclick="copyLetter()"></pre>
+    </div>
+  </div>
+</div>
+
+<div id="errorState" class="d-none text-center py-5">
+  <i class="bi bi-exclamation-triangle text-danger" style="font-size: 3rem;"></i>
+  <h5 class="mt-3">Не удалось загрузить отчёт</h5>
+  <p id="errorText" class="text-muted"></p>
+  <a href="{{ url_for('checker.index') }}" class="btn btn-outline-dark">
+    <i class="bi bi-arrow-left me-1"></i>Назад к истории
+  </a>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  const CHECK_ID = {{ check_id }};
+  const REPORT_API = '/api/check/' + CHECK_ID + '/report';
+  const EXPORT_API = '/api/check/' + CHECK_ID + '/export';
+
+  async function loadReport() {
+    try {
+      const resp = await fetch(REPORT_API);
+      if (!resp.ok) {
+        const data = await resp.json();
+        if (resp.status === 409) {
+          window.location.href = '/check/' + CHECK_ID + '/progress';
+          return;
+        }
+        throw new Error(data.error || 'Не удалось загрузить отчёт');
+      }
+      const data = await resp.json();
+      renderReport(data.report);
+    } catch (e) {
+      document.getElementById('loadingState').classList.add('d-none');
+      document.getElementById('errorState').classList.remove('d-none');
+      document.getElementById('errorText').textContent = e.message;
+    }
+  }
+
+  function renderReport(report) {
+    document.getElementById('loadingState').classList.add('d-none');
+    document.getElementById('reportContent').classList.remove('d-none');
+
+    const grade = report.grade ?? '—';
+    const gradeEl = document.getElementById('gradeCircle');
+    gradeEl.textContent = typeof grade === 'number' ? grade.toFixed(1) : grade;
+
+    if (typeof grade === 'number') {
+      if (grade >= 7) gradeEl.style.background = '#d4edda';
+      else if (grade >= 4) gradeEl.style.background = '#fff3cd';
+      else gradeEl.style.background = '#f8d7da';
+    }
+
+    const criteriaList = document.getElementById('criteriaList');
+    criteriaList.innerHTML = '';
+    if (report.criteria) {
+      const labels = {
+        'Структура презентации': 'structure',
+        'Оформление площадок': 'platform_design',
+        'УТП': 'usp',
+        'Анализ конкурентов (ER)': 'competitor_analysis',
+        'VK Ads кампания': 'vk_ads',
+      };
+      Object.entries(labels).forEach(([label, key]) => {
+        const val = report.criteria[label] ?? report.criteria[key] ?? 0;
+        const pct = (val / 10) * 100;
+        const color = val >= 7 ? 'bg-success' : val >= 4 ? 'bg-warning' : 'bg-danger';
+        const div = document.createElement('div');
+        div.className = 'mb-2';
+        const header = document.createElement('div');
+        header.className = 'd-flex justify-content-between small';
+        const labelSpan = document.createElement('span');
+        labelSpan.textContent = label;
+        const valSpan = document.createElement('span');
+        valSpan.className = 'fw-medium';
+        valSpan.textContent = val + '/10';
+        header.appendChild(labelSpan);
+        header.appendChild(valSpan);
+        div.appendChild(header);
+        const progressDiv = document.createElement('div');
+        progressDiv.className = 'progress criteria-bar';
+        const bar = document.createElement('div');
+        bar.className = 'progress-bar ' + color;
+        bar.style.width = pct + '%';
+        progressDiv.appendChild(bar);
+        div.appendChild(progressDiv);
+        criteriaList.appendChild(div);
+      });
+    }
+
+    document.getElementById('feedbackText').textContent = report.feedback || '';
+
+    const strengthsList = document.getElementById('strengthsList');
+    strengthsList.innerHTML = '';
+    (report.strengths || []).forEach(s => {
+      const li = document.createElement('li');
+      li.className = 'mb-1';
+      li.innerHTML = '<i class="bi bi-plus-circle text-success me-2 small"></i>';
+      li.appendChild(document.createTextNode(s));
+      strengthsList.appendChild(li);
+    });
+
+    const weaknessesList = document.getElementById('weaknessesList');
+    weaknessesList.innerHTML = '';
+    (report.weaknesses || []).forEach(w => {
+      const li = document.createElement('li');
+      li.className = 'mb-1';
+      li.innerHTML = '<i class="bi bi-dash-circle text-danger me-2 small"></i>';
+      li.appendChild(document.createTextNode(w));
+      weaknessesList.appendChild(li);
+    });
+
+    const tc = report.template_compliance;
+    if (tc) {
+      const container = document.getElementById('templateComplianceContainer');
+      const barColor = tc.compliance_percentage < 50 ? 'bg-danger' : tc.compliance_percentage < 80 ? 'bg-warning' : 'bg-success';
+      let missingEl = document.createDocumentFragment();
+      if (tc.missing_blocks && tc.missing_blocks.length) {
+        const alertDiv = document.createElement('div');
+        alertDiv.className = 'alert alert-warning py-2';
+        const strong = document.createElement('strong');
+        strong.textContent = '⚠️ Отсутствуют блоки:';
+        alertDiv.appendChild(strong);
+        const ul = document.createElement('ul');
+        ul.className = 'mb-0 mt-1';
+        tc.missing_blocks.forEach(b => {
+          const li = document.createElement('li');
+          li.textContent = b;
+          ul.appendChild(li);
+        });
+        alertDiv.appendChild(ul);
+        missingEl = alertDiv;
+      } else {
+        const alertDiv = document.createElement('div');
+        alertDiv.className = 'alert alert-success py-2';
+        alertDiv.textContent = '✅ Все обязательные логические блоки найдены в презентации.';
+        missingEl = alertDiv;
+      }
+
+      const card = document.createElement('div');
+      card.className = 'card mb-4 border-info';
+      card.innerHTML = `
+        <div class="card-header bg-info text-white">
+          <h5 class="mb-0"><i class="bi bi-layout-text-window me-1"></i> Соответствие шаблону презентации</h5>
+        </div>`;
+      const body = document.createElement('div');
+      body.className = 'card-body';
+      const topRow = document.createElement('div');
+      topRow.className = 'd-flex justify-content-between mb-2';
+      const slidesSpan = document.createElement('span');
+      slidesSpan.innerHTML = 'Всего слайдов: <strong>' + tc.total_slides + '</strong>';
+      const badgeSpan = document.createElement('span');
+      badgeSpan.className = 'badge bg-light text-dark';
+      badgeSpan.textContent = tc.extra_slides_note || '';
+      topRow.appendChild(slidesSpan);
+      topRow.appendChild(badgeSpan);
+      body.appendChild(topRow);
+      const progressOuter = document.createElement('div');
+      progressOuter.className = 'progress mb-3';
+      progressOuter.style.height = '20px';
+      const progressBar = document.createElement('div');
+      progressBar.className = 'progress-bar ' + barColor;
+      progressBar.setAttribute('role', 'progressbar');
+      progressBar.style.width = tc.compliance_percentage + '%';
+      progressBar.textContent = tc.compliance_percentage + '%';
+      progressOuter.appendChild(progressBar);
+      body.appendChild(progressOuter);
+      body.appendChild(missingEl);
+      card.appendChild(body);
+      container.appendChild(card);
+    }
+
+    const letterEl = document.getElementById('teacherLetterText');
+    const badgeEl = document.getElementById('letterBadge');
+    if (report.teacher_letter) {
+      letterEl.textContent = report.teacher_letter;
+      const passed = report.grade >= 4;
+      badgeEl.textContent = passed ? 'Зачет' : 'Незачет';
+      badgeEl.className = 'badge fs-6 ' + (passed ? 'bg-success' : 'bg-danger');
+    }
+  }
+
+  async function copyLetter() {
+    const text = document.getElementById('teacherLetterText').textContent;
+    try {
+      await navigator.clipboard.writeText(text);
+      const btn = document.querySelector('#teacherLetterCard .btn-outline-success');
+      const orig = btn.innerHTML;
+      btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Скопировано!';
+      setTimeout(() => btn.innerHTML = orig, 2000);
+    } catch (_) {
+      alert('Не удалось скопировать. Выделите текст вручную и скопируйте (Cmd+C).');
+    }
+  }
+
+  async function exportReport(fmt) {
+    try {
+      const resp = await fetch(EXPORT_API + '?format=' + fmt);
+      if (!resp.ok) return;
+      const data = await resp.json();
+
+      if (fmt === 'pdf') {
+        const bytes = new Uint8Array(data.content.match(/.{1,2}/g).map(b => parseInt(b, 16)));
+        const blob = new Blob([bytes], { type: 'application/pdf' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'report_' + CHECK_ID + '.pdf';
+        a.click();
+        URL.revokeObjectURL(url);
+      } else {
+        const mime = fmt === 'md' ? 'text/markdown' : 'text/plain';
+        const blob = new Blob([data.content], { type: mime });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'report_' + CHECK_ID + '.' + fmt;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (_) {}
+  }
+
+  loadReport();
+</script>
+{% endblock %}

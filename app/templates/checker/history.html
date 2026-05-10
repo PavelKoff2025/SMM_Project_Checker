@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h4 class="mb-0"><i class="bi bi-clock-history me-1"></i>История проверок</h4>
+  <a href="{{ url_for('checker.upload_page') }}" class="btn btn-dark">
+    <i class="bi bi-plus-lg me-1"></i>Новая проверка
+  </a>
+</div>
+
+<div id="loadingState" class="text-center py-5">
+  <div class="spinner-border text-primary mb-3" role="status"></div>
+  <p class="text-muted">Загрузка истории...</p>
+</div>
+
+<div id="emptyState" class="d-none text-center py-5">
+  <i class="bi bi-inbox text-muted" style="font-size: 3rem;"></i>
+  <h5 class="mt-3 text-muted">Проверок пока нет</h5>
+  <p class="text-muted small">Загрузите первую презентацию для начала.</p>
+  <a href="{{ url_for('checker.upload_page') }}" class="btn btn-dark">
+    <i class="bi bi-cloud-upload me-1"></i>Загрузить
+  </a>
+</div>
+
+<div id="tableContainer" class="d-none">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle bg-white rounded shadow-sm">
+      <thead class="table-dark">
+        <tr>
+          <th>Файл</th>
+          <th>Тип</th>
+          <th>Размер</th>
+          <th>Статус</th>
+          <th>Оценка</th>
+          <th>Дата</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="checksBody"></tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  async function loadHistory() {
+    try {
+      const resp = await fetch('{{ url_for("checker.history") }}');
+      const data = await resp.json();
+
+      document.getElementById('loadingState').classList.add('d-none');
+
+      if (!data.checks || data.checks.length === 0) {
+        document.getElementById('emptyState').classList.remove('d-none');
+        return;
+      }
+
+      document.getElementById('tableContainer').classList.remove('d-none');
+      const tbody = document.getElementById('checksBody');
+
+      data.checks.forEach(c => {
+        const statusBadge = {
+          'completed': '<span class="badge bg-success">Готово</span>',
+          'processing': '<span class="badge bg-info text-dark">Обработка</span>',
+          'error': '<span class="badge bg-danger">Ошибка</span>',
+          'pending': '<span class="badge bg-warning text-dark">Ожидание</span>',
+        }[c.status] || c.status;
+
+        const grade = c.grade != null && c.grade !== ''
+          ? '<span class="fw-medium">' + parseFloat(c.grade).toFixed(1) + '/10</span>'
+          : '—';
+
+        const date = c.created_at
+          ? new Date(c.created_at).toLocaleDateString('ru-RU')
+          : '—';
+
+        let actionBtn = '';
+        if (c.status === 'completed') {
+          actionBtn = '<a href="/check/' + c.id + '/report" class="btn btn-sm btn-outline-dark">Отчёт</a>';
+        } else if (c.status === 'processing' || c.status === 'pending') {
+          actionBtn = '<a href="/check/' + c.id + '/progress" class="btn btn-sm btn-outline-secondary">Ожидание</a>';
+        }
+
+        const tr = document.createElement('tr');
+        const td1 = document.createElement('td');
+        td1.className = 'small';
+        const link = document.createElement('a');
+        link.href = '/check/' + c.id + '/report';
+        link.className = 'text-decoration-none';
+        link.textContent = c.filename;
+        td1.appendChild(link);
+        tr.appendChild(td1);
+        ['—', '—'].forEach(t => { const td = document.createElement('td'); td.textContent = t; tr.appendChild(td); });
+        const tdStatus = document.createElement('td');
+        tdStatus.innerHTML = statusBadge;
+        tr.appendChild(tdStatus);
+        const tdGrade = document.createElement('td');
+        tdGrade.innerHTML = grade;
+        tr.appendChild(tdGrade);
+        const tdDate = document.createElement('td');
+        tdDate.className = 'small text-muted';
+        tdDate.textContent = date;
+        tr.appendChild(tdDate);
+        const tdAction = document.createElement('td');
+        tdAction.innerHTML = actionBtn;
+        tr.appendChild(tdAction);
+        tbody.appendChild(tr);
+      });
+    } catch (_) {
+      document.getElementById('loadingState').innerHTML = `
+        <i class="bi bi-exclamation-triangle text-danger" style="font-size: 3rem;"></i>
+        <h5 class="mt-3 text-muted">Не удалось загрузить историю</h5>
+        <button class="btn btn-outline-dark mt-2" onclick="location.reload()">Повторить</button>
+      `;
+    }
+  }
+
+  loadHistory();
+</script>
+{% endblock %}

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row justify-content-center min-vh-50 mt-5">
+  <div class="col-md-5 col-lg-4">
+    <div class="card shadow border-0">
+      <div class="card-body p-4">
+        <div class="text-center mb-4">
+          <i class="bi bi-shield-check text-success" style="font-size: 3rem;"></i>
+          <h4 class="mt-2">SMM Project Checker</h4>
+          <p class="text-muted small">Войдите в свой аккаунт</p>
+        </div>
+        <form method="POST">
+          {{ form.hidden_tag() }}
+          <div class="mb-3">
+            {{ form.username.label(class="form-label small fw-medium") }}
+            {{ form.username(class="form-control" + (" is-invalid" if form.username.errors else ""), placeholder="username") }}
+            {% for error in form.username.errors %}
+              <div class="invalid-feedback">{{ error }}</div>
+            {% endfor %}
+          </div>
+          <div class="mb-3">
+            {{ form.password.label(class="form-label small fw-medium") }}
+            {{ form.password(class="form-control" + (" is-invalid" if form.password.errors else "")) }}
+            {% for error in form.password.errors %}
+              <div class="invalid-feedback">{{ error }}</div>
+            {% endfor %}
+          </div>
+          {{ form.submit(class="btn btn-dark w-100 py-2 fw-medium") }}
+        </form>
+        <p class="text-center mt-3 mb-0 small">
+          Нет аккаунта?
+          <a href="{{ url_for('auth.register') }}" class="text-decoration-none">Зарегистрироваться</a>
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

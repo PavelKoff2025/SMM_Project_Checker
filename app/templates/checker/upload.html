@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+{% block extra_head %}
+<style>
+  #dropZone {
+    border: 2px dashed #adb5bd;
+    border-radius: 1rem;
+    transition: all 0.2s ease;
+    cursor: pointer;
+    min-height: 220px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  #dropZone:hover,
+  #dropZone.dragover {
+    border-color: #0d6efd;
+    background: #eaf4ff;
+  }
+  #dropZone.has-file {
+    border-color: #198754;
+    background: #ecfdf3;
+  }
+  #dropZone .icon {
+    font-size: 3rem;
+    color: #6c757d;
+  }
+  #dropZone.has-file .icon {
+    color: #198754;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-6">
+    <div class="card shadow border-0">
+      <div class="card-body p-4">
+        <h4 class="card-title mb-1">
+          <i class="bi bi-cloud-upload me-1"></i>Загрузить презентацию
+        </h4>
+        <p class="text-muted small mb-4">Загрузите PDF или PPTX для автоматического анализа SMM</p>
+
+        <div id="dropZone" class="text-center p-4 mb-3">
+          <div class="icon mb-2">
+            <i class="bi bi-file-earmark-arrow-up"></i>
+          </div>
+          <p class="mb-1 fw-medium" id="dropText">Перетащите файл сюда</p>
+          <p class="text-muted small mb-3" id="dropHint">или нажмите для выбора — PDF, PPTX до 32 МБ</p>
+          <input type="file" id="fileInput" accept=".pdf,.pptx" class="d-none">
+          <div id="fileInfo" class="d-none">
+            <span class="badge bg-success fs-6" id="fileName"></span>
+          </div>
+        </div>
+
+        <div id="uploadProgress" class="d-none mb-3">
+          <div class="d-flex justify-content-between small mb-1">
+            <span>Загрузка...</span>
+            <span id="progressPercent">0%</span>
+          </div>
+          <div class="progress" style="height: 6px;">
+            <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" style="width:0%"></div>
+          </div>
+        </div>
+
+        <div id="errorAlert" class="alert alert-danger d-none" role="alert"></div>
+
+        <button id="uploadBtn" class="btn btn-dark w-100 py-2 fw-medium" disabled>
+          <i class="bi bi-send me-1"></i>Загрузить и проверить
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  const dropZone = document.getElementById('dropZone');
+  const fileInput = document.getElementById('fileInput');
+  const dropText = document.getElementById('dropText');
+  const dropHint = document.getElementById('dropHint');
+  const fileInfo = document.getElementById('fileInfo');
+  const fileName = document.getElementById('fileName');
+  const uploadBtn = document.getElementById('uploadBtn');
+  const uploadProgress = document.getElementById('uploadProgress');
+  const progressBar = document.getElementById('progressBar');
+  const progressPercent = document.getElementById('progressPercent');
+  const errorAlert = document.getElementById('errorAlert');
+
+  let selectedFile = null;
+
+  function updateDropUI(file) {
+    if (file) {
+      dropZone.classList.add('has-file');
+      dropText.textContent = file.name;
+      dropHint.textContent = (file.size / 1024 / 1024).toFixed(1) + ' MB';
+      fileInfo.classList.remove('d-none');
+      fileName.textContent = file.name;
+      uploadBtn.disabled = false;
+    } else {
+      dropZone.classList.remove('has-file');
+      dropText.textContent = 'Перетащите файл сюда';
+      dropHint.textContent = 'или нажмите для выбора — PDF, PPTX до 32 МБ';
+      fileInfo.classList.add('d-none');
+      uploadBtn.disabled = true;
+    }
+  }
+
+  dropZone.addEventListener('click', () => fileInput.click());
+
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('dragover');
+  });
+  dropZone.addEventListener('dragleave', () => {
+    dropZone.classList.remove('dragover');
+  });
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file && /\.(pdf|pptx)$/i.test(file.name)) {
+      selectedFile = file;
+      fileInput.files = e.dataTransfer.files;
+      updateDropUI(file);
+    } else {
+      showError('Разрешены только PDF и PPTX файлы.');
+    }
+  });
+
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files[0];
+    if (file) {
+      selectedFile = file;
+      updateDropUI(file);
+    }
+  });
+
+  function showError(msg) {
+    errorAlert.textContent = msg;
+    errorAlert.classList.remove('d-none');
+  }
+
+  function hideError() {
+    errorAlert.classList.add('d-none');
+  }
+
+  uploadBtn.addEventListener('click', async () => {
+    if (!selectedFile) return;
+    hideError();
+    uploadBtn.disabled = true;
+    uploadProgress.classList.remove('d-none');
+
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '{{ url_for("main.upload_and_check") }}');
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const pct = Math.round((e.loaded / e.total) * 100);
+        progressBar.style.width = pct + '%';
+        progressPercent.textContent = pct + '%';
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status === 201) {
+        const data = JSON.parse(xhr.responseText);
+        window.location.href = '/check/' + data.check_id + '/progress';
+      } else {
+        let msg = 'Ошибка загрузки.';
+        try { msg = JSON.parse(xhr.responseText).error; } catch(_) {}
+        showError(msg);
+        uploadBtn.disabled = false;
+        uploadProgress.classList.add('d-none');
+      }
+    };
+
+    xhr.onerror = () => {
+      showError('Сетевая ошибка. Попробуйте снова.');
+      uploadBtn.disabled = false;
+      uploadProgress.classList.add('d-none');
+    };
+
+    xhr.send(formData);
+  });
+</script>
+{% endblock %}
