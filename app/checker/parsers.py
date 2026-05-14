@@ -1,5 +1,3 @@
-import io
-from typing import Optional
 
 import pdfplumber
 from pptx import Presentation
@@ -40,10 +38,10 @@ class PDFParser:
         }
 
     @staticmethod
-    def ocr_fallback(file_path: str) -> Optional[str]:
+    def ocr_fallback(file_path: str) -> str | None:
         try:
-            from pdf2image import convert_from_path
             import pytesseract
+            from pdf2image import convert_from_path
         except ImportError:
             return None
 

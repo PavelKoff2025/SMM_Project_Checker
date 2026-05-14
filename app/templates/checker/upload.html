@@ -28,6 +28,15 @@
   #dropZone.has-file .icon {
     color: #198754;
   }
+  .provider-group .btn-check:checked + .btn {
+    background: #212529;
+    color: #fff;
+    border-color: #212529;
+  }
+  .provider-group .btn-check:disabled + .btn {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
 </style>
 {% endblock %}
 
@@ -40,6 +49,27 @@
           <i class="bi bi-cloud-upload me-1"></i>Загрузить презентацию
         </h4>
         <p class="text-muted small mb-4">Загрузите PDF или PPTX для автоматического анализа SMM</p>
+
+        <div class="mb-3">
+          <label class="form-label small fw-medium d-block mb-2">
+            <i class="bi bi-cpu me-1"></i>LLM для анализа
+          </label>
+          <div class="btn-group provider-group w-100" role="group" aria-label="LLM provider">
+            {% for p in providers %}
+              <input type="radio" class="btn-check" name="provider" id="provider-{{ p.key }}"
+                     value="{{ p.key }}"
+                     {% if p.key == default_provider and p.configured %}checked{% endif %}
+                     {% if not p.configured %}disabled{% endif %}>
+              <label class="btn btn-outline-dark" for="provider-{{ p.key }}"
+                     {% if not p.configured %}title="API-ключ не настроен"{% endif %}>
+                {{ p.label }}
+                {% if not p.configured %}
+                  <i class="bi bi-lock-fill ms-1 small"></i>
+                {% endif %}
+              </label>
+            {% endfor %}
+          </div>
+        </div>
 
         <div id="dropZone" class="text-center p-4 mb-3">
           <div class="icon mb-2">
@@ -154,9 +184,13 @@
 
     const formData = new FormData();
     formData.append('file', selectedFile);
+    const providerEl = document.querySelector('input[name="provider"]:checked');
+    if (providerEl) {
+      formData.append('provider', providerEl.value);
+    }
 
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', '{{ url_for("main.upload_and_check") }}');
+    xhr.open('POST', '{{ url_for("checker.upload_and_check") }}');
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) {

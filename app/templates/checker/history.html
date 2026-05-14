@@ -27,8 +27,7 @@
       <thead class="table-dark">
         <tr>
           <th>Файл</th>
-          <th>Тип</th>
-          <th>Размер</th>
+          <th>LLM</th>
           <th>Статус</th>
           <th>Оценка</th>
           <th>Дата</th>
@@ -58,6 +57,11 @@
       document.getElementById('tableContainer').classList.remove('d-none');
       const tbody = document.getElementById('checksBody');
 
+      const providerLabels = {
+        'deepseek': 'DeepSeek',
+        'grok': 'Grok',
+      };
+
       data.checks.forEach(c => {
         const statusBadge = {
           'completed': '<span class="badge bg-success">Готово</span>',
@@ -65,6 +69,8 @@
           'error': '<span class="badge bg-danger">Ошибка</span>',
           'pending': '<span class="badge bg-warning text-dark">Ожидание</span>',
         }[c.status] || c.status;
+
+        const providerLabel = providerLabels[c.provider] || c.provider || '—';
 
         const grade = c.grade != null && c.grade !== ''
           ? '<span class="fw-medium">' + parseFloat(c.grade).toFixed(1) + '/10</span>'
@@ -90,7 +96,10 @@
         link.textContent = c.filename;
         td1.appendChild(link);
         tr.appendChild(td1);
-        ['—', '—'].forEach(t => { const td = document.createElement('td'); td.textContent = t; tr.appendChild(td); });
+        const tdProvider = document.createElement('td');
+        tdProvider.innerHTML =
+          '<span class="badge bg-light text-dark border">' + providerLabel + '</span>';
+        tr.appendChild(tdProvider);
         const tdStatus = document.createElement('td');
         tdStatus.innerHTML = statusBadge;
         tr.appendChild(tdStatus);

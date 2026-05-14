@@ -1,4 +1,5 @@
 import os
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -12,6 +13,9 @@ class Config:
     DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY', '')
     DEEPSEEK_MODEL = os.environ.get('DEEPSEEK_MODEL', 'deepseek-chat')
 
+    GROK_API_KEY = os.environ.get('GROK_API_KEY', '')
+    GROK_MODEL = os.environ.get('GROK_MODEL', 'grok-4-1-fast-reasoning')
+
     UPLOAD_FOLDER = os.environ.get(
         'UPLOAD_FOLDER',
         os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads'),
@@ -19,13 +23,10 @@ class Config:
     ALLOWED_EXTENSIONS = {'pdf', 'pptx'}
     MAX_CONTENT_LENGTH = 32 * 1024 * 1024
 
-    MAIL_SERVER = os.environ.get('MAIL_SERVER', 'smtp.gmail.com')
-    MAIL_PORT = int(os.environ.get('MAIL_PORT', 587))
-    MAIL_USE_TLS = os.environ.get('MAIL_USE_TLS', 'true').lower() == 'true'
-    MAIL_USERNAME = os.environ.get('MAIL_USERNAME', '')
-    MAIL_PASSWORD = os.environ.get('MAIL_PASSWORD', '')
-    MAIL_DEFAULT_SENDER = os.environ.get('MAIL_DEFAULT_SENDER', '')
-    TEACHER_EMAIL = os.environ.get('TEACHER_EMAIL', '')
+    REDIS_URL = os.environ.get('REDIS_URL', '')
+    RATELIMIT_STORAGE_URI = os.environ.get(
+        'RATELIMIT_STORAGE_URI', os.environ.get('RATELIMIT_STORAGE_URL', '')
+    ) or 'memory://'
 
 
 class DevelopmentConfig(Config):

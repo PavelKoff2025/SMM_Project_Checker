@@ -1,17 +1,27 @@
 import io
 
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table
+
 from app.validators.template_validator import PresentationTemplateValidator
 
 
 class ReportService:
 
-    @staticmethod
-    def generate_report(llm_response: dict) -> dict:
+    CRITERIA_LABELS = {
+        'structure': 'Структура презентации',
+        'platform_design': 'Оформление площадок',
+        'usp': 'УТП',
+        'competitor_analysis': 'Анализ конкурентов (ER)',
+        'vk_ads': 'VK Ads кампания',
+    }
+
+    @classmethod
+    def generate_report(cls, llm_response: dict) -> dict:
         criteria = llm_response.get('criteria', {})
+        feedback_per = llm_response.get('criteria_feedback', {}) or {}
         score = llm_response.get('score', 0)
         feedback = llm_response.get('feedback', '')
         strengths = llm_response.get('strengths', [])
@@ -20,11 +30,12 @@ class ReportService:
         return {
             'grade': round(score, 1),
             'criteria': {
-                'Структура презентации': criteria.get('structure', 0),
-                'Оформление площадок': criteria.get('platform_design', 0),
-                'УТП': criteria.get('usp', 0),
-                'Анализ конкурентов (ER)': criteria.get('competitor_analysis', 0),
-                'VK Ads кампания': criteria.get('vk_ads', 0),
+                label: criteria.get(key, 0)
+                for key, label in cls.CRITERIA_LABELS.items()
+            },
+            'criteria_feedback': {
+                label: feedback_per.get(key, '')
+                for key, label in cls.CRITERIA_LABELS.items()
             },
             'feedback': feedback,
             'strengths': strengths,
@@ -44,7 +55,17 @@ class ReportService:
             bar = '█' * int(score) + '░' * (10 - int(score))
             lines.append(f'  {name}: {score}/10  {bar}')
 
-        lines.append(f'\nФидбек:\n{report["feedback"]}\n')
+        per = report.get('criteria_feedback') or {}
+        if any(per.values()):
+            lines.append('\nДетальный разбор по критериям:')
+            for name in report['criteria'].keys():
+                comment = (per.get(name) or '').strip()
+                if comment:
+                    lines.append(f'\n  {name}:')
+                    for paragraph in comment.split('\n'):
+                        lines.append(f'    {paragraph}')
+
+        lines.append(f'\nОбщий итог:\n{report["feedback"]}\n')
 
         if report['strengths']:
             lines.append('Сильные стороны:')
@@ -71,7 +92,16 @@ class ReportService:
             bar = '█' * int(score) + '░' * (10 - int(score))
             lines.append(f'| {name} | {score}/10 {bar} |')
 
-        lines.append(f'\n## Фидбек\n{report["feedback"]}\n')
+        per = report.get('criteria_feedback') or {}
+        if any(per.values()):
+            lines.append('\n## Детальный разбор по критериям\n')
+            for name in report['criteria'].keys():
+                comment = (per.get(name) or '').strip()
+                if comment:
+                    lines.append(f'### {name}\n')
+                    lines.append(f'{comment}\n')
+
+        lines.append(f'\n## Общий итог\n\n{report["feedback"]}\n')
 
         if report['strengths']:
             lines.append('## Сильные стороны\n')
@@ -134,9 +164,19 @@ class ReportService:
         elements.append(table)
         elements.append(Spacer(1, 6 * mm))
 
-        elements.append(Paragraph('Фидбек', heading_style))
-        lines = report['feedback'].split('\n')
-        for line in lines:
+        per = report.get('criteria_feedback') or {}
+        if any(per.values()):
+            elements.append(Paragraph('Детальный разбор по критериям', heading_style))
+            for name in report['criteria'].keys():
+                comment = (per.get(name) or '').strip()
+                if comment:
+                    elements.append(Paragraph(f'<b>{name}</b>', body_style))
+                    for paragraph in comment.split('\n'):
+                        elements.append(Paragraph(paragraph, body_style))
+                    elements.append(Spacer(1, 2 * mm))
+
+        elements.append(Paragraph('Общий итог', heading_style))
+        for line in report['feedback'].split('\n'):
             elements.append(Paragraph(line, body_style))
 
         if report['strengths']:
@@ -156,7 +196,12 @@ class ReportService:
         return buf.read()
 
     @staticmethod
-    def generate_teacher_letter(filename: str, grade: float, feedback: str) -> str:
+    def generate_teacher_letter(
+        filename: str,
+        grade: float,
+        feedback: str,
+        criteria_feedback: dict | None = None,
+    ) -> str:
         passed = grade >= 4.0
         result = 'Зачет' if passed else 'Незачет'
         lines = []
@@ -165,6 +210,18 @@ class ReportService:
         lines.append('Мои основные мысли и замечания ниже:')
         lines.append('')
         lines.append(feedback)
+
+        if criteria_feedback and any((v or '').strip() for v in criteria_feedback.values()):
+            lines.append('')
+            lines.append('Детальный разбор по критериям:')
+            for name, comment in criteria_feedback.items():
+                comment = (comment or '').strip()
+                if not comment:
+                    continue
+                lines.append('')
+                lines.append(f'• {name}')
+                lines.append(comment)
+
         lines.append('')
         lines.append(f'Ваша итоговая оценка по курсу "Взаимодействие с социальными медиа" — "{result}".')
         lines.append('')

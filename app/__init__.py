@@ -3,13 +3,14 @@ import os
 from logging.handlers import RotatingFileHandler
 
 from flask import Flask, jsonify
-from flask_sqlalchemy import SQLAlchemy
-from flask_login import LoginManager
-from flask_migrate import Migrate
-from flask_wtf.csrf import CSRFProtect
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from flask_login import LoginManager
+from flask_migrate import Migrate
+from flask_sqlalchemy import SQLAlchemy
+from flask_wtf.csrf import CSRFProtect
 from sqlalchemy import text
+
 from config import config_by_name
 
 db = SQLAlchemy()
@@ -30,17 +31,17 @@ def create_app(config_name: str = 'development') -> Flask:
     csrf.init_app(app)
     limiter.init_app(app)
 
+    from app.queue import init_queue
+    init_queue(app)
+
     from app.auth import auth_bp
     from app.checker import checker_bp
-    from app.routes import bp as main_bp
 
     app.register_blueprint(auth_bp, url_prefix='/auth')
-    app.register_blueprint(checker_bp, url_prefix='/')
-    app.register_blueprint(main_bp)
+    app.register_blueprint(checker_bp)
 
-    csrf.exempt(main_bp)
+    # JSON API endpoints are used by XHR without csrf_token; auth forms keep CSRF.
     csrf.exempt(checker_bp)
-    csrf.exempt(auth_bp)
 
     if config_name != 'development':
         app.config.update(
@@ -63,10 +64,27 @@ def create_app(config_name: str = 'development') -> Flask:
 
     @app.route('/api/health')
     def health():
+        components = {'db': 'ok', 'queue': 'disabled'}
+        status_code = 200
         try:
             db.session.execute(text('SELECT 1'))
-            return jsonify({'status': 'healthy'}), 200
         except Exception:
-            return jsonify({'status': 'unhealthy'}), 500
+            components['db'] = 'fail'
+            status_code = 500
+
+        from app.queue import get_redis
+        redis_client = get_redis()
+        if redis_client is not None:
+            try:
+                redis_client.ping()
+                components['queue'] = 'ok'
+            except Exception:
+                components['queue'] = 'fail'
+                status_code = 500
+
+        return jsonify({
+            'status': 'healthy' if status_code == 200 else 'unhealthy',
+            'components': components,
+        }), status_code
 
     return app

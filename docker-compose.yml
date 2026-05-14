@@ -9,10 +9,14 @@ services:
     environment:
       - FLASK_ENV=production
       - DATABASE_URL=postgresql://smm_user:smm_pass@db:5432/smm_checker
+      - REDIS_URL=redis://redis:6379/0
+      - RATELIMIT_STORAGE_URI=redis://redis:6379/1
     volumes:
       - uploads_data:/app/uploads:rw
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
     networks:
@@ -31,6 +35,31 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+
+  worker:
+    build: .
+    container_name: smm_checker_worker
+    command: ["python3", "worker.py"]
+    env_file:
+      - .env
+    environment:
+      - FLASK_ENV=production
+      - DATABASE_URL=postgresql://smm_user:smm_pass@db:5432/smm_checker
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - uploads_data:/app/uploads:rw
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
   db:
     image: postgres:16-alpine
@@ -54,6 +83,23 @@ services:
     cap_drop:
       - ALL
 
+  redis:
+    image: redis:7-alpine
+    container_name: smm_checker_redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+
 networks:
   frontend:
     driver: bridge
@@ -63,3 +109,4 @@ networks:
 volumes:
   postgres_data:
   uploads_data:
+  redis_data:

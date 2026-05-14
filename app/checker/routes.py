@@ -1,22 +1,40 @@
 import json
-import os
 
-from flask import jsonify, request, current_app, render_template
-from flask_login import login_required, current_user
+from flask import current_app, jsonify, render_template, request
+from flask_login import current_user, login_required
 
-from app import db
-from app.models import ProjectCheck
+from app import db, limiter
 from app.checker import checker_bp
-from app.checker.parsers import PDFParser, PPTXParser
-from app.checker.llm_client import DeepSeekClient
-from app.checker.prompt_templates import (
-    SLIDE_TEMPLATE,
-    STRUCTURE_VALIDATION_INSTRUCTION,
-    SYSTEM_PROMPT,
-    TEMPLATE_COMPLIANCE_CHECK,
-    USER_PROMPT_TEMPLATE,
+from app.checker.llm_client import (
+    DEFAULT_PROVIDER,
+    PROVIDERS,
+    is_provider_configured,
+    list_providers,
 )
 from app.checker.services import ReportService
+from app.models import ProjectCheck
+from app.queue import enqueue_check
+from app.services.file_storage import (
+    FileValidationError,
+    persist_upload,
+    sanitize_original_filename,
+    split_extension,
+    validate_upload,
+)
+
+
+def _resolve_provider(raw: str | None) -> str:
+    candidate = (raw or '').strip().lower() or DEFAULT_PROVIDER
+    if candidate not in PROVIDERS:
+        candidate = DEFAULT_PROVIDER
+    return candidate
+
+
+def _owned_or_404(check_id: int):
+    check = db.session.get(ProjectCheck, check_id)
+    if not check or check.user_id != current_user.id:
+        return None
+    return check
 
 
 @checker_bp.route('/')
@@ -28,14 +46,26 @@ def index():
 @checker_bp.route('/upload')
 @login_required
 def upload_page():
-    return render_template('upload.html')
+    providers = list_providers(current_app.config)
+    return render_template(
+        'upload.html', providers=providers, default_provider=DEFAULT_PROVIDER
+    )
+
+
+@checker_bp.route('/api/providers', methods=['GET'])
+@login_required
+def providers():
+    return jsonify({
+        'ok': True,
+        'default': DEFAULT_PROVIDER,
+        'providers': list_providers(current_app.config),
+    })
 
 
 @checker_bp.route('/check/<int:check_id>/progress')
 @login_required
 def progress_page(check_id: int):
-    check = db.session.get(ProjectCheck, check_id)
-    if not check or check.user_id != current_user.id:
+    if not _owned_or_404(check_id):
         return render_template('error.html', message='Проверка не найдена.'), 404
     return render_template('progress.html', check_id=check_id)
 
@@ -43,176 +73,140 @@ def progress_page(check_id: int):
 @checker_bp.route('/check/<int:check_id>/report')
 @login_required
 def report_page(check_id: int):
-    check = db.session.get(ProjectCheck, check_id)
-    if not check or check.user_id != current_user.id:
+    check = _owned_or_404(check_id)
+    if not check:
         return render_template('error.html', message='Проверка не найдена.'), 404
     return render_template('report.html', check_id=check_id, check=check)
 
 
-ALLOWED_EXTENSIONS = {'pdf', 'pptx'}
-MAX_FILE_SIZE = 32 * 1024 * 1024
+@checker_bp.route('/api/check/upload', methods=['POST'])
+@login_required
+@limiter.limit('5/minute')
+def upload_and_check():
+    if 'file' not in request.files:
+        return jsonify({'ok': False, 'error': 'Файл не предоставлен.'}), 400
 
+    file = request.files['file']
+    original_filename = sanitize_original_filename(file.filename or '')
+    if not original_filename:
+        return jsonify({'ok': False, 'error': 'Файл не выбран.'}), 400
 
-def _allowed_file(filename: str) -> bool:
-    return '.' in filename and filename.rsplit('.', 1)[-1].lower() in ALLOWED_EXTENSIONS
+    provider = _resolve_provider(request.form.get('provider'))
+    if not is_provider_configured(provider, current_app.config):
+        return jsonify({
+            'ok': False,
+            'error': f'Провайдер «{PROVIDERS[provider].label}» не настроен.',
+        }), 400
 
+    _, ext = split_extension(original_filename)
 
-def _process_check(app, check_id: int):
-    with app.app_context():
-        check = db.session.get(ProjectCheck, check_id)
-        if not check:
-            return
+    try:
+        validate_upload(file.stream, ext)
+    except FileValidationError as exc:
+        status = 413 if 'лимит' in str(exc) else 400
+        return jsonify({'ok': False, 'error': str(exc)}), status
 
-        try:
-            upload_dir = current_app.config['UPLOAD_FOLDER']
-            _name_uuid, ext = os.path.splitext(check.safe_filename)
-            ext = ext.lower()
-            file_path = os.path.join(upload_dir, check.safe_filename)
+    upload_dir = current_app.config['UPLOAD_FOLDER']
+    try:
+        safe_filename, _ = persist_upload(file.stream, upload_dir, ext)
+    except FileValidationError as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 400
 
-            if ext == '.pdf':
-                result = PDFParser.extract_with_fallback(file_path)
-                check.extracted_text = result['text']
-                slide_count = len(result.get('pages', []))
-                slide_titles = [
-                    p.get('text', '')[:80] for p in result.get('pages', [])
-                ]
-            elif ext == '.pptx':
-                result = PPTXParser.extract_text(file_path)
-                check.extracted_text = result['text']
-                slide_count = len(result.get('slides', []))
-                slide_titles = [
-                    s.get('title', '') or s.get('content', [''])[0][:80]
-                    for s in result.get('slides', [])
-                ]
-            else:
-                raise ValueError(f'Unsupported file type: {ext}')
+    check = ProjectCheck(
+        user_id=current_user.id,
+        original_filename=original_filename,
+        safe_filename=safe_filename,
+        status='processing',
+        llm_provider=provider,
+    )
+    db.session.add(check)
+    db.session.commit()
 
-            if not check.extracted_text.strip():
-                raise ValueError('No text could be extracted from the file.')
+    enqueue_check(check.id)
 
-            slide_info_lines = [f'Всего слайдов: {slide_count}']
-            for i, title in enumerate(slide_titles, 1):
-                slide_info_lines.append(f'  Слайд {i}: {title}')
-            slide_info = '\n'.join(slide_info_lines)
-
-            slide_texts = [s['text'] for s in result.get('pages', result.get('slides', []))]
-            template_check = ReportService.check_template_compliance(slide_texts)
-            template_check_summary = '\n'.join(template_check['recommendations'])
-            if template_check['missing_blocks']:
-                template_check_summary += (
-                    f"\nОтсутствуют блоки: {', '.join(template_check['missing_blocks'])}"
-                )
-
-            api_key = current_app.config.get('DEEPSEEK_API_KEY') or os.environ.get('DEEPSEEK_API_KEY', '')
-            if not api_key:
-                raise RuntimeError('DEEPSEEK_API_KEY is not configured.')
-
-            client = DeepSeekClient(api_key=api_key)
-            system_prompt = (
-                SYSTEM_PROMPT.format(
-                    structure_validation=STRUCTURE_VALIDATION_INSTRUCTION.format(
-                        validation_result_json=json.dumps(
-                            template_check, ensure_ascii=False, indent=2
-                        )
-                    )
-                )
-                + TEMPLATE_COMPLIANCE_CHECK.format(
-                    template_check_result=template_check_summary
-                )
-            )
-            text_for_llm = USER_PROMPT_TEMPLATE.format(
-                project_name=check.original_filename,
-                team_members='—',
-                slide_info=slide_info,
-                extracted_text=check.extracted_text,
-                slide_template=SLIDE_TEMPLATE,
-            )
-
-            llm_result = client.analyze_presentation(text=text_for_llm, system_prompt=system_prompt)
-
-            check.llm_response = json.dumps(llm_result, ensure_ascii=False)
-            check.grade = str(round(llm_result.get('score', 0), 1))
-            report_data = ReportService.generate_report(llm_result)
-            report_data['filename'] = check.original_filename
-            report_data['teacher_letter'] = ReportService.generate_teacher_letter(
-                check.original_filename, float(check.grade), report_data['feedback']
-            )
-            check.final_report = json.dumps(report_data, ensure_ascii=False)
-            check.status = 'completed'
-
-        except Exception as e:
-            check.status = 'error'
-            check.final_report = json.dumps({'error': 'Внутренняя ошибка сервера'}, ensure_ascii=False)
-            current_app.logger.error('Check %d failed: %s', check_id, str(e), exc_info=True)
-
-        db.session.commit()
+    return jsonify({
+        'check_id': check.id,
+        'original_filename': original_filename,
+        'status': 'processing',
+        'provider': provider,
+    }), 201
 
 
 @checker_bp.route('/api/check/<int:check_id>/status', methods=['GET'])
 @login_required
 def status(check_id: int):
-    check = db.session.get(ProjectCheck, check_id)
-    if not check or check.user_id != current_user.id:
+    check = _owned_or_404(check_id)
+    if not check:
         return jsonify({'ok': False, 'error': 'Проверка не найдена.'}), 404
-
     return jsonify({
         'ok': True,
         'check_id': check.id,
         'status': check.status,
+        'provider': check.llm_provider,
     })
 
 
 @checker_bp.route('/api/check/<int:check_id>/report', methods=['GET'])
 @login_required
 def report(check_id: int):
-    check = db.session.get(ProjectCheck, check_id)
-    if not check or check.user_id != current_user.id:
+    check = _owned_or_404(check_id)
+    if not check:
         return jsonify({'ok': False, 'error': 'Проверка не найдена.'}), 404
-
     if check.status != 'completed':
-        return jsonify({'ok': False, 'error': 'Проверка ещё не завершена.', 'status': check.status}), 409
+        return jsonify(
+            {'ok': False, 'error': 'Проверка ещё не завершена.', 'status': check.status}
+        ), 409
 
     report_data = json.loads(check.final_report) if check.final_report else {}
-    return jsonify({'ok': True, 'report': report_data})
+    return jsonify({
+        'ok': True,
+        'report': report_data,
+        'provider': check.llm_provider,
+    })
 
 
 @checker_bp.route('/api/check/<int:check_id>/export', methods=['GET'])
 @login_required
 def export(check_id: int):
-    check = db.session.get(ProjectCheck, check_id)
-    if not check or check.user_id != current_user.id:
+    check = _owned_or_404(check_id)
+    if not check:
         return jsonify({'ok': False, 'error': 'Проверка не найдена.'}), 404
-
     if check.status != 'completed':
-        return jsonify({'ok': False, 'error': 'Проверка ещё не завершена.', 'status': check.status}), 409
+        return jsonify(
+            {'ok': False, 'error': 'Проверка ещё не завершена.', 'status': check.status}
+        ), 409
 
-    report = json.loads(check.final_report) if check.final_report else {}
+    report_data = json.loads(check.final_report) if check.final_report else {}
     fmt = request.args.get('format', 'txt')
 
-    service = ReportService()
-
     if fmt == 'md':
-        content = service.export_to_markdown(report)
-        return jsonify({'ok': True, 'format': 'md', 'content': content})
-
+        return jsonify({
+            'ok': True,
+            'format': 'md',
+            'content': ReportService.export_to_markdown(report_data),
+        })
     if fmt == 'pdf':
-        pdf_bytes = service.export_to_pdf(report)
         return jsonify({
             'ok': True,
             'format': 'pdf',
-            'content': pdf_bytes.hex(),
+            'content': ReportService.export_to_pdf(report_data).hex(),
         })
-
-    content = service.export_to_txt(report)
-    return jsonify({'ok': True, 'format': 'txt', 'content': content})
+    return jsonify({
+        'ok': True,
+        'format': 'txt',
+        'content': ReportService.export_to_txt(report_data),
+    })
 
 
 @checker_bp.route('/api/check/history', methods=['GET'])
 @login_required
 def history():
-    checks = ProjectCheck.query.filter_by(user_id=current_user.id)\
-        .order_by(ProjectCheck.created_at.desc()).all()
-
+    checks = (
+        ProjectCheck.query
+        .filter_by(user_id=current_user.id)
+        .order_by(ProjectCheck.created_at.desc())
+        .all()
+    )
     return jsonify({
         'ok': True,
         'checks': [
@@ -221,8 +215,8 @@ def history():
                 'filename': c.original_filename,
                 'status': c.status,
                 'grade': c.grade,
+                'provider': c.llm_provider,
                 'created_at': c.created_at.isoformat() if c.created_at else None,
-
             }
             for c in checks
         ],

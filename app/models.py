@@ -1,7 +1,9 @@
 from datetime import datetime, timedelta
 
 from flask_login import UserMixin
-from werkzeug.security import generate_password_hash, check_password_hash
+from sqlalchemy import Index
+from werkzeug.security import check_password_hash, generate_password_hash
+
 from app import db, login_manager
 
 
@@ -21,19 +23,15 @@ class User(UserMixin, db.Model):
         return check_password_hash(self.password_hash, password)
 
     def is_locked(self) -> bool:
-        if self.locked_until and self.locked_until > datetime.utcnow():
-            return True
-        if self.locked_until:
-            self.failed_attempts = 0
-            self.locked_until = None
-        return False
+        """Pure check — does not mutate state. Caller decides what to do."""
+        return bool(self.locked_until and self.locked_until > datetime.utcnow())
 
-    def record_failed_attempt(self):
+    def record_failed_attempt(self) -> None:
         self.failed_attempts = (self.failed_attempts or 0) + 1
         if self.failed_attempts >= 5:
             self.locked_until = datetime.utcnow() + timedelta(minutes=15)
 
-    def reset_failed_attempts(self):
+    def reset_failed_attempts(self) -> None:
         self.failed_attempts = 0
         self.locked_until = None
 
@@ -45,14 +43,23 @@ class ProjectCheck(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     original_filename = db.Column(db.String(255), nullable=False)
     safe_filename = db.Column(db.String(255), nullable=False)
-    status = db.Column(db.String(20), default='pending')
+    status = db.Column(db.String(20), default='pending', nullable=False)
     extracted_text = db.Column(db.Text)
     llm_response = db.Column(db.Text)
     final_report = db.Column(db.Text)
     grade = db.Column(db.String(20))
-    created_at = db.Column(db.DateTime, default=db.func.now())
+    llm_provider = db.Column(
+        db.String(20), nullable=False, default='deepseek', server_default='deepseek'
+    )
+    created_at = db.Column(
+        db.DateTime, default=datetime.utcnow, nullable=False
+    )
 
     user = db.relationship('User', backref=db.backref('checks', lazy=True))
+
+    __table_args__ = (
+        Index('ix_checks_user_created', 'user_id', 'created_at'),
+    )
 
 
 @login_manager.user_loader
