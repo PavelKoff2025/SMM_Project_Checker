@@ -127,7 +127,7 @@
         const reportResp = await fetch('/api/check/' + CHECK_ID + '/report');
         if (reportResp.ok) {
           const reportData = await reportResp.json();
-          showError(reportData.report?.error || 'Неизвестная ошибка');
+          showError(reportData.error || 'Неизвестная ошибка');
         } else {
           showError('Произошла ошибка при анализе.');
         }

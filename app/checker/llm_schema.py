@@ -20,12 +20,11 @@ EXPECTED_CRITERIA = (
     'vk_ads',
 )
 
-# Soft minimum length — we accept any non-trivial answer, then ask for an
-# expansion in a follow-up call when the content is shorter than desired.
-# Hard minimums here would force the whole check to error out, which is a
-# worse UX than a slightly terse but otherwise correct report.
-_MIN_PER_CRITERION_CHARS = 1
-_MIN_SUMMARY_CHARS = 1
+# Minimum length — set to 0 so empty strings from DeepSeek don't fail
+# Pydantic validation. The is_too_terse() method still triggers an expansion
+# request when content is too short, giving the model a second chance.
+_MIN_PER_CRITERION_CHARS = 0
+_MIN_SUMMARY_CHARS = 0
 
 # Soft targets used by the client to decide whether to request an expansion.
 DESIRED_PER_CRITERION_CHARS = 120
@@ -33,11 +32,11 @@ DESIRED_SUMMARY_CHARS = 200
 
 
 class CriteriaScores(BaseModel):
-    structure: float = Field(ge=0, le=10)
-    platform_design: float = Field(ge=0, le=10)
-    usp: float = Field(ge=0, le=10)
-    competitor_analysis: float = Field(ge=0, le=10)
-    vk_ads: float = Field(ge=0, le=10)
+    structure: float = Field(default=0, ge=0, le=10)
+    platform_design: float = Field(default=0, ge=0, le=10)
+    usp: float = Field(default=0, ge=0, le=10)
+    competitor_analysis: float = Field(default=0, ge=0, le=10)
+    vk_ads: float = Field(default=0, ge=0, le=10)
 
     def as_dict(self) -> dict[str, float]:
         return {name: getattr(self, name) for name in EXPECTED_CRITERIA}
@@ -46,30 +45,31 @@ class CriteriaScores(BaseModel):
 class CriteriaFeedback(BaseModel):
     """Per-criterion narrative; ideally a 2–3 sentence comment."""
 
-    structure: str = Field(min_length=_MIN_PER_CRITERION_CHARS)
-    platform_design: str = Field(min_length=_MIN_PER_CRITERION_CHARS)
-    usp: str = Field(min_length=_MIN_PER_CRITERION_CHARS)
-    competitor_analysis: str = Field(min_length=_MIN_PER_CRITERION_CHARS)
-    vk_ads: str = Field(min_length=_MIN_PER_CRITERION_CHARS)
+    structure: str = Field(default='', min_length=_MIN_PER_CRITERION_CHARS)
+    platform_design: str = Field(default='', min_length=_MIN_PER_CRITERION_CHARS)
+    usp: str = Field(default='', min_length=_MIN_PER_CRITERION_CHARS)
+    competitor_analysis: str = Field(default='', min_length=_MIN_PER_CRITERION_CHARS)
+    vk_ads: str = Field(default='', min_length=_MIN_PER_CRITERION_CHARS)
 
     def as_dict(self) -> dict[str, str]:
         return {name: getattr(self, name) for name in EXPECTED_CRITERIA}
 
 
 class LLMReport(BaseModel):
-    score: float = Field(ge=0, le=10)
-    criteria: CriteriaScores
-    criteria_feedback: CriteriaFeedback
-    feedback: str = Field(min_length=_MIN_SUMMARY_CHARS)
+    score: float = Field(default=0, ge=0, le=10)
+    criteria: CriteriaScores | None = None
+    criteria_feedback: CriteriaFeedback | None = None
+    feedback: str = Field(default='', min_length=_MIN_SUMMARY_CHARS)
     strengths: list[str] = Field(default_factory=list)
     weaknesses: list[str] = Field(default_factory=list)
 
     def is_too_terse(self) -> bool:
         if len(self.feedback) < DESIRED_SUMMARY_CHARS:
             return True
-        per = self.criteria_feedback.as_dict()
-        if any(len(v) < DESIRED_PER_CRITERION_CHARS for v in per.values()):
-            return True
+        if self.criteria_feedback is not None:
+            per = self.criteria_feedback.as_dict()
+            if any(len(v) < DESIRED_PER_CRITERION_CHARS for v in per.values()):
+                return True
         if len(self.strengths) < 2 or len(self.weaknesses) < 2:
             return True
         return False
@@ -90,10 +90,14 @@ class LLMReport(BaseModel):
         return []
 
     def to_normalized_dict(self) -> dict[str, Any]:
+        criteria = (self.criteria.as_dict() if self.criteria is not None
+                    else {k: 0.0 for k in EXPECTED_CRITERIA})
+        cf = (self.criteria_feedback.as_dict() if self.criteria_feedback is not None
+              else {k: '' for k in EXPECTED_CRITERIA})
         return {
             'score': self.score,
-            'criteria': self.criteria.as_dict(),
-            'criteria_feedback': self.criteria_feedback.as_dict(),
+            'criteria': criteria,
+            'criteria_feedback': cf,
             'feedback': self.feedback,
             'strengths': self.strengths,
             'weaknesses': self.weaknesses,

@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="mb-4">
+  <h4 class="mb-3"><i class="bi bi-search me-1"></i>Поиск проектов</h4>
+  <div class="input-group">
+    <input type="text" id="searchInput" class="form-control form-control-lg" placeholder="Введите название проекта..." autofocus>
+    <button id="searchBtn" class="btn btn-dark px-4">
+      <i class="bi bi-search"></i>
+    </button>
+  </div>
+</div>
+
+<div id="loadingState" class="d-none text-center py-5">
+  <div class="spinner-border text-primary mb-3" role="status"></div>
+  <p class="text-muted">Поиск...</p>
+</div>
+
+<div id="emptyState" class="d-none text-center py-5">
+  <i class="bi bi-search text-muted" style="font-size: 3rem;"></i>
+  <h5 class="mt-3 text-muted">Введите название для поиска</h5>
+</div>
+
+<div id="noResultsState" class="d-none text-center py-5">
+  <i class="bi bi-inbox text-muted" style="font-size: 3rem;"></i>
+  <h5 class="mt-3 text-muted">Ничего не найдено</h5>
+  <p class="text-muted small">Попробуйте изменить запрос</p>
+</div>
+
+<div id="tableContainer" class="d-none">
+  <p class="text-muted small mb-2" id="resultCount"></p>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle bg-white rounded shadow-sm">
+      <thead class="table-dark">
+        <tr>
+          <th>Проект</th>
+          <th>Студент</th>
+          <th style="width:120px">Оценка</th>
+          <th style="width:100px">Дата</th>
+          <th style="width:60px"></th>
+        </tr>
+      </thead>
+      <tbody id="resultsBody"></tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  const searchInput = document.getElementById('searchInput');
+  const searchBtn = document.getElementById('searchBtn');
+  const loadingState = document.getElementById('loadingState');
+  const emptyState = document.getElementById('emptyState');
+  const noResultsState = document.getElementById('noResultsState');
+  const tableContainer = document.getElementById('tableContainer');
+  const resultsBody = document.getElementById('resultsBody');
+  const resultCount = document.getElementById('resultCount');
+
+  function showState(el) {
+    [loadingState, emptyState, noResultsState, tableContainer].forEach(e => e.classList.add('d-none'));
+    el.classList.remove('d-none');
+  }
+
+  async function doSearch() {
+    const q = searchInput.value.trim();
+    if (!q) {
+      showState(emptyState);
+      return;
+    }
+
+    showState(loadingState);
+
+    try {
+      const resp = await fetch('/api/search?q=' + encodeURIComponent(q));
+      const data = await resp.json();
+
+      if (!data.checks || data.checks.length === 0) {
+        showState(noResultsState);
+        return;
+      }
+
+      showState(tableContainer);
+      resultCount.textContent = 'Найдено: ' + data.checks.length;
+      resultsBody.innerHTML = '';
+
+      data.checks.forEach(c => {
+        const grade = c.grade != null && c.grade !== '' ? parseFloat(c.grade) : null;
+        const tr = document.createElement('tr');
+
+        const tdName = document.createElement('td');
+        tdName.className = 'small';
+        const link = document.createElement('a');
+        link.href = '/check/' + c.id + '/report';
+        link.className = 'text-decoration-none fw-medium';
+        link.textContent = c.filename;
+        tdName.appendChild(link);
+        tr.appendChild(tdName);
+
+        const tdStudent = document.createElement('td');
+        tdStudent.className = 'small text-muted';
+        tdStudent.textContent = c.username;
+        tr.appendChild(tdStudent);
+
+        const tdGrade = document.createElement('td');
+        tdGrade.innerHTML = '<span class="fw-medium">' + (grade != null ? grade.toFixed(1) + '/10' : '—') + '</span>';
+        tr.appendChild(tdGrade);
+
+        const tdDate = document.createElement('td');
+        tdDate.className = 'small text-muted';
+        tdDate.textContent = c.created_at ? new Date(c.created_at).toLocaleDateString('ru-RU') : '—';
+        tr.appendChild(tdDate);
+
+        const tdAction = document.createElement('td');
+        tdAction.innerHTML = '<a href="/check/' + c.id + '/report" class="btn btn-sm btn-outline-dark"><i class="bi bi-eye"></i></a>';
+        tr.appendChild(tdAction);
+
+        resultsBody.appendChild(tr);
+      });
+    } catch (_) {
+      showState(emptyState);
+    }
+  }
+
+  searchBtn.addEventListener('click', doSearch);
+  searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+</script>
+{% endblock %}

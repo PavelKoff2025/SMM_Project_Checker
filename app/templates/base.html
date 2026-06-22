@@ -31,6 +31,16 @@
                 <i class="bi bi-cloud-upload me-1"></i>Загрузить
               </a>
             </li>
+            <li class="nav-item">
+              <a class="nav-link" href="{{ url_for('checker.rating_page') }}">
+                <i class="bi bi-trophy me-1"></i>Рейтинг
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="{{ url_for('checker.search_page') }}">
+                <i class="bi bi-search me-1"></i>Поиск
+              </a>
+            </li>
             <li class="nav-item ms-lg-2">
               <span class="navbar-text text-light-emphasis small me-2">
                 <i class="bi bi-person-circle"></i> {{ current_user.username }}

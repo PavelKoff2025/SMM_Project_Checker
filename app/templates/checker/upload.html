@@ -162,8 +162,13 @@
   fileInput.addEventListener('change', () => {
     const file = fileInput.files[0];
     if (file) {
-      selectedFile = file;
-      updateDropUI(file);
+      if (/\.(pdf|pptx)$/i.test(file.name)) {
+        selectedFile = file;
+        updateDropUI(file);
+      } else {
+        showError('Разрешены только PDF и PPTX файлы.');
+        fileInput.value = '';
+      }
     }
   });
 

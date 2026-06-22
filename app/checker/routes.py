@@ -152,10 +152,17 @@ def report(check_id: int):
     check = _owned_or_404(check_id)
     if not check:
         return jsonify({'ok': False, 'error': 'Проверка не найдена.'}), 404
+    if check.status == 'error':
+        report_data = json.loads(check.final_report) if check.final_report else {}
+        return jsonify({
+            'ok': False,
+            'error': report_data.get('error', 'Произошла ошибка при анализе.'),
+            'status': 'error',
+        }), 200
     if check.status != 'completed':
-        return jsonify(
-            {'ok': False, 'error': 'Проверка ещё не завершена.', 'status': check.status}
-        ), 409
+        return jsonify({
+            'ok': False, 'error': 'Проверка ещё не завершена.', 'status': check.status
+        }), 409
 
     report_data = json.loads(check.final_report) if check.final_report else {}
     return jsonify({
@@ -195,6 +202,74 @@ def export(check_id: int):
         'ok': True,
         'format': 'txt',
         'content': ReportService.export_to_txt(report_data),
+    })
+
+
+@checker_bp.route('/search')
+@login_required
+def search_page():
+    return render_template('search.html')
+
+
+@checker_bp.route('/api/search', methods=['GET'])
+@login_required
+def search():
+    q = (request.args.get('q') or '').strip()
+    if not q:
+        return jsonify({'ok': True, 'checks': []})
+
+    checks = (
+        ProjectCheck.query
+        .filter(ProjectCheck.status == 'completed', ProjectCheck.grade.isnot(None))
+        .all()
+    )
+    q_lower = q.lower()
+    matched = [c for c in checks if q_lower in (c.original_filename or '').lower()]
+    matched.sort(key=lambda c: float(c.grade or 0), reverse=True)
+
+    return jsonify({
+        'ok': True,
+        'q': q,
+        'checks': [
+            {
+                'id': c.id,
+                'filename': c.original_filename,
+                'grade': c.grade,
+                'username': c.user.username,
+                'created_at': c.created_at.isoformat() if c.created_at else None,
+            }
+            for c in matched
+        ],
+    })
+
+
+@checker_bp.route('/rating')
+@login_required
+def rating_page():
+    return render_template('rating.html')
+
+
+@checker_bp.route('/api/rating', methods=['GET'])
+@login_required
+def rating():
+    checks = (
+        ProjectCheck.query
+        .filter(ProjectCheck.status == 'completed', ProjectCheck.grade.isnot(None))
+        .all()
+    )
+    checks.sort(key=lambda c: float(c.grade or 0), reverse=True)
+    return jsonify({
+        'ok': True,
+        'checks': [
+            {
+                'id': c.id,
+                'filename': c.original_filename,
+                'grade': c.grade,
+                'username': c.user.username,
+                'created_at': c.created_at.isoformat() if c.created_at else None,
+            }
+            for c in checks
+        ],
     })
 
 

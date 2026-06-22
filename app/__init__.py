@@ -50,17 +50,16 @@ def create_app(config_name: str = 'development') -> Flask:
             SESSION_COOKIE_SAMESITE='Lax',
         )
 
-    if not app.debug:
-        handler = RotatingFileHandler(
-            os.path.join(os.path.dirname(app.instance_path), 'app.log'),
-            maxBytes=10485760, backupCount=10,
-        )
-        handler.setFormatter(logging.Formatter(
-            '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
-        ))
-        handler.setLevel(logging.INFO)
-        app.logger.addHandler(handler)
-        app.logger.setLevel(logging.INFO)
+    handler = RotatingFileHandler(
+        os.path.join(os.path.dirname(app.instance_path), 'app.log'),
+        maxBytes=10485760, backupCount=10,
+    )
+    handler.setFormatter(logging.Formatter(
+        '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
+    ))
+    handler.setLevel(logging.DEBUG if app.debug else logging.INFO)
+    app.logger.addHandler(handler)
+    app.logger.setLevel(logging.DEBUG if app.debug else logging.INFO)
 
     @app.route('/api/health')
     def health():
